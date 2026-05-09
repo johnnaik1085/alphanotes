@@ -1,6 +1,6 @@
 const express = require("express");
 const {
-  getMyCourse,
+  getMyCourses,
   getSubjects,
   getChapters,
   getNotes,
@@ -14,7 +14,7 @@ const router = express.Router();
 
 router.use(protect, authorize("student"));
 
-router.get("/my-course", asyncHandler(getMyCourse));
+router.get("/my-courses", asyncHandler(getMyCourses));
 router.get("/subjects", asyncHandler(getSubjects));
 router.get("/chapters/:subjectId", asyncHandler(getChapters));
 router.get("/notes/:chapterId", asyncHandler(getNotes));

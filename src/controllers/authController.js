@@ -15,7 +15,7 @@ const login = async (req, res) => {
     return res.status(400).json({ message: "Email and password are required" });
   }
 
-  const user = await User.findOne({ email }).populate("course subjects");
+  const user = await User.findOne({ email }).populate("courses subjects");
   if (!user || !(await user.matchPassword(password))) {
     return res.status(401).json({ message: "Invalid email or password" });
   }
@@ -52,7 +52,7 @@ const login = async (req, res) => {
 };
 
 const getMe = async (req, res) => {
-  const user = await User.findById(req.user._id).select("-password").populate("course subjects");
+  const user = await User.findById(req.user._id).select("-password").populate("courses subjects");
   if (!user) {
     return res.status(401).json({ message: "Account no longer exists" });
   }

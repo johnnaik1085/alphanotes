@@ -15,18 +15,18 @@ const deletePdfFiles = (notes) => {
 };
 
 const createUser = (role) => async (req, res) => {
-  const { name, email, password, course, subjects = [], isBlocked = false } = req.body;
+  const { name, email, password, courses = [], subjects = [], isBlocked = false } = req.body;
 
   if (!name || !email || !password) {
     return res.status(400).json({ message: "Name, email and password are required" });
   }
 
-  if (role === "student" && !course) {
-    return res.status(400).json({ message: "Student course is required" });
+  if (role === "student" && courses.length === 0) {
+    return res.status(400).json({ message: "At least one course is required for a student" });
   }
 
-  if (role === "teacher" && (!course || subjects.length === 0)) {
-    return res.status(400).json({ message: "Teacher course and subjects are required" });
+  if (role === "teacher" && (courses.length === 0 || subjects.length === 0)) {
+    return res.status(400).json({ message: "Teacher courses and subjects are required" });
   }
 
   const user = await User.create({
@@ -34,16 +34,17 @@ const createUser = (role) => async (req, res) => {
     email,
     password,
     role,
-    course: role === "admin" ? undefined : course,
+    courses: role === "admin" ? [] : courses,
     subjects: role === "teacher" ? subjects : [],
     isBlocked,
   });
 
+  await user.populate("courses subjects");
   res.status(201).json({ user });
 };
 
 const listUsers = (role) => async (req, res) => {
-  const users = await User.find({ role }).select("-password").populate("course subjects").sort("-createdAt");
+  const users = await User.find({ role }).select("-password").populate("courses subjects").sort("-createdAt");
   res.json({ users });
 };
 
@@ -51,7 +52,7 @@ const updateUser = (role) => async (req, res) => {
   const user = await User.findOne({ _id: req.params.id, role });
   if (!user) return res.status(404).json({ message: `${role} not found` });
 
-  const { name, email, password, course, subjects, isBlocked, resetDevice } = req.body;
+  const { name, email, password, courses, subjects, isBlocked, resetDevice } = req.body;
 
   if (name !== undefined) user.name = name;
   if (email !== undefined) user.email = email;
@@ -59,17 +60,17 @@ const updateUser = (role) => async (req, res) => {
   if (isBlocked !== undefined) user.isBlocked = isBlocked;
 
   if (role === "student") {
-    if (course !== undefined) user.course = course;
+    if (courses !== undefined) user.courses = courses;
     if (resetDevice) user.deviceId = "";
   }
 
   if (role === "teacher") {
-    if (course !== undefined) user.course = course;
+    if (courses !== undefined) user.courses = courses;
     if (subjects !== undefined) user.subjects = subjects;
   }
 
   await user.save();
-  await user.populate("course subjects");
+  await user.populate("courses subjects");
 
   res.json({ user });
 };
@@ -97,42 +98,66 @@ const updateCourse = async (req, res) => {
 };
 
 const deleteCourse = async (req, res) => {
-  const subjects = await Subject.find({ course: req.params.id }).select("_id");
-  const subjectIds = subjects.map((subject) => subject._id);
-  const chapters = await Chapter.find({ subject: { $in: subjectIds } }).select("_id");
-  const chapterIds = chapters.map((chapter) => chapter._id);
-  const notes = await Note.find({ chapter: { $in: chapterIds } }).select("pdfPath");
+  const courseId = req.params.id;
 
-  deletePdfFiles(notes);
-  await Note.deleteMany({ chapter: { $in: chapterIds } });
-  await Chapter.deleteMany({ subject: { $in: subjectIds } });
-  await Subject.deleteMany({ course: req.params.id });
-  await User.updateMany({ course: req.params.id }, { $unset: { course: "" }, $set: { subjects: [] } });
+  // Find subjects that have this course in their courses array
+  const allSubjectsWithCourse = await Subject.find({ courses: courseId }).select("_id courses");
 
-  const course = await Course.findByIdAndDelete(req.params.id);
+  // Subjects that only belong to this course → delete them with cascade
+  const subjectsToDelete = allSubjectsWithCourse.filter((s) => s.courses.length <= 1);
+  const subjectsToUpdate = allSubjectsWithCourse.filter((s) => s.courses.length > 1);
+  const subjectIdsToDelete = subjectsToDelete.map((s) => s._id);
+
+  if (subjectIdsToDelete.length > 0) {
+    const chapters = await Chapter.find({ subject: { $in: subjectIdsToDelete } }).select("_id");
+    const chapterIds = chapters.map((c) => c._id);
+    const notes = await Note.find({ chapter: { $in: chapterIds } }).select("pdfPath");
+    deletePdfFiles(notes);
+    await Note.deleteMany({ chapter: { $in: chapterIds } });
+    await Chapter.deleteMany({ subject: { $in: subjectIdsToDelete } });
+    await Subject.deleteMany({ _id: { $in: subjectIdsToDelete } });
+  }
+
+  // Remove this course from subjects shared with other courses
+  if (subjectsToUpdate.length > 0) {
+    await Subject.updateMany(
+      { _id: { $in: subjectsToUpdate.map((s) => s._id) } },
+      { $pull: { courses: courseId } }
+    );
+  }
+
+  // Remove course from all users
+  await User.updateMany({ courses: courseId }, { $pull: { courses: courseId } });
+
+  const course = await Course.findByIdAndDelete(courseId);
   if (!course) return res.status(404).json({ message: "Course not found" });
   res.json({ message: "Course deleted successfully" });
 };
 
 const createSubject = async (req, res) => {
-  const { title, course } = req.body;
-  if (!title || !course) {
-    return res.status(400).json({ message: "Title and course are required" });
+  const { title, courses = [] } = req.body;
+  if (!title || courses.length === 0) {
+    return res.status(400).json({ message: "Title and at least one course are required" });
   }
 
-  const subject = await Subject.create({ title, course });
-  await subject.populate("course");
+  const subject = await Subject.create({ title, courses });
+  await subject.populate("courses");
   res.status(201).json({ subject });
 };
 
 const listSubjects = async (req, res) => {
-  const filter = req.query.course ? { course: req.query.course } : {};
-  const subjects = await Subject.find(filter).populate("course").sort("title");
+  const filter = req.query.course ? { courses: req.query.course } : {};
+  const subjects = await Subject.find(filter).populate("courses").sort("title");
   res.json({ subjects });
 };
 
 const updateSubject = async (req, res) => {
-  const subject = await Subject.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }).populate("course");
+  const { title, courses } = req.body;
+  const update = {};
+  if (title !== undefined) update.title = title;
+  if (courses !== undefined) update.courses = courses;
+
+  const subject = await Subject.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true }).populate("courses");
   if (!subject) return res.status(404).json({ message: "Subject not found" });
   res.json({ subject });
 };
@@ -154,7 +179,7 @@ const deleteSubject = async (req, res) => {
 
 const listLoginAttempts = async (req, res) => {
   const attempts = await LoginAttempt.find()
-    .populate("student", "name email course")
+    .populate("student", "name email courses")
     .sort("-attemptedAt");
 
   res.json({ attempts });

@@ -7,7 +7,7 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, minlength: 6 },
     role: { type: String, enum: ["admin", "teacher", "student"], required: true },
-    course: { type: mongoose.Schema.Types.ObjectId, ref: "Course" },
+    courses: [{ type: mongoose.Schema.Types.ObjectId, ref: "Course" }],
     subjects: [{ type: mongoose.Schema.Types.ObjectId, ref: "Subject" }],
     deviceId: { type: String, default: "" },
     isBlocked: { type: Boolean, default: false },

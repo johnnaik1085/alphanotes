@@ -12,7 +12,7 @@ const getPublicBaseUrl = (req) => {
 };
 
 const getMySubjects = async (req, res) => {
-  const subjects = await Subject.find({ _id: { $in: req.user.subjects } }).populate("course").sort("title");
+  const subjects = await Subject.find({ _id: { $in: req.user.subjects } }).populate("courses").sort("title");
   res.json({ subjects });
 };
 
